@@ -27,11 +27,6 @@ static std::string VERT_SHADER_FILE = std::string(SHADER_DIRECTORY) + "shader/ar
 static std::string FRAG_SHADER_FILE = std::string(SHADER_DIRECTORY) + "shader/arcballControlTwoObject.frag";
 
 
-//struct Cube{
-//    Cube(const )
-//
-//}
-
 // 頂点オブジェクト
 struct Vertex {
     Vertex(const glm::vec3 &position_, const glm::vec3 &color_)
@@ -103,12 +98,14 @@ enum ArcballMode {
 
 int arcballMode = ARCBALL_MODE_NONE;
 glm::mat4 modelMat, viewMat, projMat;
-glm::mat4 acRotMat, acTransMat, acScaleMat;
+//glm::mat4 acRotMat, acTransMat, acScaleMat;
 glm::vec3 gravity;
 
 float acScale = 1.0f;
 glm::ivec2 oldPos;
 glm::ivec2 newPos;
+
+
 
 // VAOの初期化
 void initVAO() {
@@ -272,6 +269,7 @@ void initShaders() {
 
 // OpenGLの初期化関数
 void initializeGL() {
+
     // 深度テストの有効化
     glEnable(GL_DEPTH_TEST);
     
@@ -284,27 +282,111 @@ void initializeGL() {
     // シェーダの用意
     initShaders();
     
+    
+    
     // カメラの初期化
     projMat = glm::perspective(45.0f, (float)WIN_WIDTH / (float)WIN_HEIGHT, 0.1f, 1000.0f);
     
-    viewMat = glm::lookAt(glm::vec3(3.0f, 4.0f, 5.0f),   // 視点の位置
+    viewMat = glm::lookAt(glm::vec3(6.0f, 6.0f, 5.0f),   // 視点の位置
                           glm::vec3(0.0f, 0.0f, 0.0f),   // 見ている先
                           glm::vec3(0.0f, 1.0f, 0.0f));  // 視界の上方向
 
 }
 
+
+struct ArcballController{ //アークボールのクラス
+    
+    //!! スクリーン上の位置をアークボール球上の位置に変換する関数
+    glm::vec3 getVector(double x, double y) { //スクリーン上の位置
+        glm::vec3 pt( 2.0 * x / WIN_WIDTH  - 1.0,
+                     -2.0 * y / WIN_HEIGHT + 1.0, 0.0);　//スクリーン座標の標準化
+        
+        const double xySquared = pt.x * pt.x + pt.y * pt.y;
+        if (xySquared <= 1.0) {
+            // 単位円の内側ならz座標を計算
+            pt.z = std::sqrt(1.0 - xySquared);
+        } else {
+            // 外側なら球の外枠上にあると考える
+            pt = glm::normalize(pt);
+        }
+        
+        return pt;
+    }
+    
+    void updateRotate() {
+        static const double Pi = 4.0 * std::atan(1.0);
+        
+        // スクリーン座標をアークボール球上の座標に変換
+        const glm::vec3 u = glm::normalize(getVector(newPos.x, newPos.y));
+        const glm::vec3 v = glm::normalize(getVector(oldPos.x, oldPos.y));
+        
+        // カメラ座標における回転量 (=オブジェクト座標における回転量)
+        const double angle = std::acos(std::max(-1.0f, std::min(glm::dot(u, v), 1.0f)));
+        
+        // カメラ空間における回転軸
+        const glm::vec3 rotAxis = glm::cross(v, u);
+        
+        // カメラ座標の情報をオブジェクト座標に変換する行列
+        const glm::mat4 c2oMat = glm::inverse(viewMat * modelMat);
+        
+        // オブジェクト座標における回転軸
+        const glm::vec3 rotAxisObjSpace = glm::vec3(c2oMat * glm::vec4(rotAxis, 0.0f));
+        
+        // 回転行列の更新
+        acRotMat = glm::rotate((float)(4.0 * angle), rotAxisObjSpace) * acRotMat;
+        // arc[ClickedId-1].SacRotMat = acRotMat;
+        
+    }
+    
+    void updateTranslate() {
+        // オブジェクト重心のスクリーン座標を求める
+        glm::vec4 gravityScreenSpace = (projMat * viewMat * modelMat) * glm::vec4(gravity.x, gravity.y, gravity.z, 1.0f);
+        gravityScreenSpace /= gravityScreenSpace.w;
+        
+        // スクリーン座標系における移動量
+        glm::vec4 newPosScreenSpace(2.0 * newPos.x / WIN_WIDTH, -2.0 * newPos.y / WIN_HEIGHT, gravityScreenSpace.z, 1.0f);
+        glm::vec4 oldPosScreenSpace(2.0 * oldPos.x / WIN_WIDTH, -2.0 * oldPos.y / WIN_HEIGHT, gravityScreenSpace.z, 1.0f);
+        
+        // スクリーン座標の情報をオブジェクト座標に変換する行列
+        const glm::mat4 s2oMat = glm::inverse(projMat * viewMat * modelMat);
+        
+        // スクリーン空間の座標をオブジェクト空間に変換
+        glm::vec4 newPosObjSpace = s2oMat * newPosScreenSpace;
+        glm::vec4 oldPosObjSpace = s2oMat * oldPosScreenSpace;
+        newPosObjSpace /= newPosObjSpace.w;
+        oldPosObjSpace /= oldPosObjSpace.w;
+        
+        // オブジェクト座標系での移動量
+        const glm::vec3 transObjSpace = glm::vec3(newPosObjSpace - oldPosObjSpace);
+        
+        // オブジェクト空間での平行移動
+        acTransMat = glm::translate(acTransMat, transObjSpace);
+        // arc[ClickedId-1].SacTransMat = acTransMat;
+        
+    }
+    
+    void updateScale() {
+        acScaleMat = glm::scale(glm::vec3(acScale, acScale, acScale));
+        
+        //arc[ClickedId-1].SacScaleMat = acScaleMat;
+        
+    }
+    
+    
+    glm::mat4 acRotMat;
+    glm::mat4 acTransMat;
+    glm::mat4 acScaleMat;
+    
+    
+};
+
+ArcballController controllerA;
+ArcballController controllerB;//２つ分のコントローラーを作る。
+
 // OpenGLの描画関数
 void paintGL() {
     // 背景色の描画
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-//    // 座標の変換
-//    glm::mat4 projMat = glm::perspective(45.0f,
-//                                         (float)WIN_WIDTH / (float)WIN_HEIGHT, 0.1f, 1000.0f);
-//    
-//    glm::mat4 viewMat = glm::lookAt(glm::vec3(3.0f, 4.0f, 5.0f),   // 視点の位置
-//                                    glm::vec3(0.0f, 0.0f, 0.0f),   // 見ている先
-//                                    glm::vec3(0.0f, 1.0f, 0.0f));  // 視界の上方向
     
     // シェーダの有効化
     glUseProgram(programId);
@@ -314,18 +396,16 @@ void paintGL() {
     
     // 1つ目の立方体を描画
     {
-        modelMat = glm::translate(modelMat, glm::vec3(-2.0f, 0.0f, 0.0f));
-        glm::mat4 mvpMat1 = projMat * viewMat * modelMat; //!!
-        if(ClickedId ==1)mvpMat1 *= acTransMat * acRotMat * acScaleMat;
+        modelMat = glm::translate(modelMat, glm::vec3(-4.0f, 1.0f, 0.0f));
+                glm::mat4 mvpMat = projMat * viewMat * modelMat; //!!
+        mvpMat *= controllerA.acTransMat * controllerA.acRotMat* controllerA.acScaleMat;　//オブジェクトごとにコントローラーを当てはめ
         
-//       glm::mat4 modelMat;
-//        //modelMat = glm::rotate(modelMat, theta, glm::vec3(0.0f, 1.0f, 0.0f));
-//        glm::mat4 mvpMat = projMat * viewMat * modelMat;
+        modelMat = glm::rotate(modelMat, theta, glm::vec3(0.0f, 1.0f, 0.0f));
         
         // Uniform変数の転送
         GLuint uid;
         uid = glGetUniformLocation(programId, "u_mvpMat");
-        glUniformMatrix4fv(uid, 1, GL_FALSE, glm::value_ptr(mvpMat1));
+        glUniformMatrix4fv(uid, 1, GL_FALSE, glm::value_ptr(mvpMat));
         uid = glGetUniformLocation(programId, "u_selectID");
         glUniform1i(uid, selectMode ? 1 : -1);
         
@@ -334,22 +414,21 @@ void paintGL() {
     
     // 2つ目の立方体を描画
     {
-        modelMat = glm::translate(modelMat, glm::vec3(2.0f, 0.0f, 0.0f));
-        glm::mat4 mvpMat2 = projMat * viewMat * modelMat; //!!
-        if(ClickedId ==2) mvpMat2 *= acTransMat * acRotMat * acScaleMat;
-//        glm::mat4 modelMat;
-//       // modelMat = glm::rotate(modelMat, theta * 2.0f, glm::vec3(0.0f, 1.0f, 0.0f));
-//        glm::mat4 mvpMat = projMat * viewMat * modelMat;
+        modelMat = glm::translate(modelMat, glm::vec3(4.0f, -1.0f, 0.0f));
+        glm::mat4 mvpMat = projMat * viewMat * modelMat; //!!
+        
+        mvpMat *= controllerB.acTransMat * controllerB.acRotMat* controllerB.acScaleMat; //オブジェクトごとにコントローラーを当てはめ
+ 
+        modelMat = glm::rotate(modelMat, theta * 2.0f, glm::vec3(0.0f, 1.0f, 0.0f));
         
         // Uniform変数の転送
         GLuint uid;
         uid = glGetUniformLocation(programId, "u_mvpMat");
-        glUniformMatrix4fv(uid, 1, GL_FALSE, glm::value_ptr(mvpMat2));
+        glUniformMatrix4fv(uid, 1, GL_FALSE, glm::value_ptr(mvpMat));
         uid = glGetUniformLocation(programId, "u_selectID");
         glUniform1i(uid, selectMode ? 2 : -1);
         
         glDrawElements(GL_TRIANGLES, 48, GL_UNSIGNED_INT, 0);
-        
         
         
     }
@@ -386,7 +465,6 @@ void resizeGL(GLFWwindow *window, int width, int height) {
 }
 
 void mouseEvent(GLFWwindow *window, int button, int action, int mods) {
-   //!!
     // クリックしたボタンで処理を切り替える
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         arcballMode = ARCBALL_MODE_ROTATE;
@@ -441,119 +519,51 @@ void mouseEvent(GLFWwindow *window, int button, int action, int mods) {
     
     }
     
-    //!!ここまで
-    
-//    if (action == GLFW_PRESS) {
-//        // クリックされた位置を取得
-//        double px, py;
-//        glfwGetCursorPos(window, &px, &py);
-//        const int cx = (int)px;
-//        const int cy = (int)py;
-//        
-//        // 選択モードでの描画
-//        selectMode = true;
-//        paintGL();
-//        selectMode = false;
-//        
-//        // ピクセルの大きさの計算 (Macの場合には必要)
-//        int renderBufferWidth, renderBufferHeight;
-//        glfwGetFramebufferSize(window, &renderBufferWidth, &renderBufferHeight);
-//        int pixelSize = std::max(renderBufferWidth / WIN_WIDTH, renderBufferHeight / WIN_HEIGHT);
-//        
-//        // より適切なやり方
-//        unsigned char byte[4];
-//        glReadPixels(cx * pixelSize, (WIN_HEIGHT - cy - 1) * pixelSize, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &byte);
-//        printf("Mouse position: %d %d\n", cx, cy);
-//        printf("Select object %d\n", (int)byte[0]);
-//    }
 }
 
 
-//!! スクリーン上の位置をアークボール球上の位置に変換する関数
-glm::vec3 getVector(double x, double y) { //スクリーン上の位置
-    glm::vec3 pt( 2.0 * x / WIN_WIDTH  - 1.0,
-                 -2.0 * y / WIN_HEIGHT + 1.0, 0.0);　//スクリーン座標の標準化
-    
-    const double xySquared = pt.x * pt.x + pt.y * pt.y;
-    if (xySquared <= 1.0) {
-        // 単位円の内側ならz座標を計算
-        pt.z = std::sqrt(1.0 - xySquared);
-    } else {
-        // 外側なら球の外枠上にあると考える
-        pt = glm::normalize(pt);
-    }
-    
-    return pt;
-}
 
-void updateRotate() {
-    static const double Pi = 4.0 * std::atan(1.0);
-    
-    // スクリーン座標をアークボール球上の座標に変換
-    const glm::vec3 u = glm::normalize(getVector(newPos.x, newPos.y));
-    const glm::vec3 v = glm::normalize(getVector(oldPos.x, oldPos.y));
-    
-    // カメラ座標における回転量 (=オブジェクト座標における回転量)
-    const double angle = std::acos(std::max(-1.0f, std::min(glm::dot(u, v), 1.0f)));
-    
-    // カメラ空間における回転軸
-    const glm::vec3 rotAxis = glm::cross(v, u);
-    
-    // カメラ座標の情報をオブジェクト座標に変換する行列
-    const glm::mat4 c2oMat = glm::inverse(viewMat * modelMat);
-    
-    // オブジェクト座標における回転軸
-    const glm::vec3 rotAxisObjSpace = glm::vec3(c2oMat * glm::vec4(rotAxis, 0.0f));
-    
-    // 回転行列の更新
-    acRotMat = glm::rotate((float)(4.0 * angle), rotAxisObjSpace) * acRotMat;
-}
-
-void updateTranslate() {
-    // オブジェクト重心のスクリーン座標を求める
-    glm::vec4 gravityScreenSpace = (projMat * viewMat * modelMat) * glm::vec4(gravity.x, gravity.y, gravity.z, 1.0f);
-    gravityScreenSpace /= gravityScreenSpace.w;
-    
-    // スクリーン座標系における移動量
-    glm::vec4 newPosScreenSpace(2.0 * newPos.x / WIN_WIDTH, -2.0 * newPos.y / WIN_HEIGHT, gravityScreenSpace.z, 1.0f);
-    glm::vec4 oldPosScreenSpace(2.0 * oldPos.x / WIN_WIDTH, -2.0 * oldPos.y / WIN_HEIGHT, gravityScreenSpace.z, 1.0f);
-    
-    // スクリーン座標の情報をオブジェクト座標に変換する行列
-    const glm::mat4 s2oMat = glm::inverse(projMat * viewMat * modelMat);
-    
-    // スクリーン空間の座標をオブジェクト空間に変換
-    glm::vec4 newPosObjSpace = s2oMat * newPosScreenSpace;
-    glm::vec4 oldPosObjSpace = s2oMat * oldPosScreenSpace;
-    newPosObjSpace /= newPosObjSpace.w;
-    oldPosObjSpace /= oldPosObjSpace.w;
-    
-    // オブジェクト座標系での移動量
-    const glm::vec3 transObjSpace = glm::vec3(newPosObjSpace - oldPosObjSpace);
-    
-    // オブジェクト空間での平行移動
-    acTransMat = glm::translate(acTransMat, transObjSpace);
-}
-
-void updateScale() {
-    acScaleMat = glm::scale(glm::vec3(acScale, acScale, acScale));
-}
 
 void updateMouse() {
+    if(ClickedId == 1){
+    
     switch (arcballMode) {
         case ARCBALL_MODE_ROTATE:
-            updateRotate();
+            controllerA.updateRotate();
+            
             break;
             
         case ARCBALL_MODE_TRANSLATE:
-            updateTranslate();
+            controllerA.updateTranslate();
             break;
             
         case ARCBALL_MODE_SCALE:
             acScale += (float)(oldPos.y - newPos.y) / WIN_HEIGHT;
-            updateScale();
+            controllerA.updateScale();
             break;
     }
+        
+    }else if(ClickedId ==2){
+    
+        switch (arcballMode) {
+            case ARCBALL_MODE_ROTATE:
+                controllerB.updateRotate();
+                
+                break;
+                
+            case ARCBALL_MODE_TRANSLATE:
+                controllerB.updateTranslate();
+                break;
+                
+            case ARCBALL_MODE_SCALE:
+                acScale += (float)(oldPos.y - newPos.y) / WIN_HEIGHT;
+                controllerB.updateScale();
+                break;
+        }
+
+    }
 }
+
 void mouseMoveEvent(GLFWwindow *window, double xpos, double ypos) {
     if (isDragging) {
         // マウスの現在位置を更新
@@ -574,13 +584,15 @@ void mouseMoveEvent(GLFWwindow *window, double xpos, double ypos) {
 
 void wheelEvent(GLFWwindow *window, double xpos, double ypos) {
     acScale += ypos / 10.0;
-    updateScale();
+    
+    if(ClickedId == 1){
+    controllerA.updateScale();
+    }else if(ClickedId == 2){
+        controllerB.updateScale();
+        
+    }
+    
 }
-
-//// アニメーションのためのアップデート
-//void animate() {
-//    theta += 2.0f * PI / 360.0f;  // 10分の1回転
-//}
 
 int main(int argc, char **argv) {
     // OpenGLを初期化する
@@ -606,6 +618,9 @@ int main(int argc, char **argv) {
     // OpenGLの描画対象にWindowを追加
     glfwMakeContextCurrent(window);
     
+  
+    
+    
     //!! マウスのイベントを処理する関数を登録
     glfwSetMouseButtonCallback(window, mouseEvent);
     glfwSetCursorPosCallback(window, mouseMoveEvent);
@@ -629,8 +644,6 @@ int main(int argc, char **argv) {
         // 描画
         paintGL();
         
-        // アニメーション
-      //  animate();
         
         // 描画用バッファの切り替え
         glfwSwapBuffers(window);
